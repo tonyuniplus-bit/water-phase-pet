@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
-import type { Region } from "../physics/curve";
 
 interface CreatureProps {
-  region: Region;
+  region: string;
   reactKey: number;
   feeding: "eat" | "release" | null;
   looping: boolean;
@@ -55,6 +54,61 @@ function Arms({ y, color }: { y: number; color: string }) {
     <g>
       <ellipse className="arm arm-l" cx={46} cy={y} rx={16} ry={11} fill={color} />
       <ellipse className="arm arm-r" cx={194} cy={y} rx={16} ry={11} fill={color} />
+    </g>
+  );
+}
+
+function Crystal() {
+  return (
+    <g>
+      <polygon className="spark" points="36,46 42,30 48,46 42,62" fill="#f5f3ff" />
+      <polygon className="spark delay" points="190,70 196,56 202,70 196,84" fill="#e9d5ff" />
+      <polygon
+        points="120,28 176,78 168,168 120,214 72,168 64,78"
+        fill="url(#crystalGrad)"
+        stroke="#f5f3ff"
+        strokeWidth={4}
+      />
+      <polygon points="120,28 176,78 120,118" fill="rgba(255,255,255,.35)" />
+      <polygon points="120,118 64,78 72,168 120,214" fill="rgba(40,10,70,.18)" />
+      <path d="M64 78 L176 78" stroke="rgba(255,255,255,.65)" strokeWidth={3} />
+      <path d="M120 28 L120 214" stroke="rgba(255,255,255,.35)" strokeWidth={3} />
+      <Arms y={150} color="#c4b5fd" />
+      <Face x={120} y={124} mood="chilly" />
+    </g>
+  );
+}
+
+function CrystalVapour() {
+  return (
+    <g>
+      <ellipse className="wisp" cx={78} cy={48} rx={22} ry={12} fill="#d8b4fe" opacity={0.85} />
+      <ellipse className="wisp w2" cx={168} cy={40} rx={26} ry={14} fill="#c084fc" opacity={0.8} />
+      <ellipse className="wisp" cx={150} cy={74} rx={16} ry={9} fill="#e9d5ff" />
+      <polygon
+        points="120,70 158,104 152,176 120,204 88,176 82,104"
+        fill="url(#crystalGrad)"
+        stroke="#f5f3ff"
+        strokeWidth={4}
+      />
+      <polygon points="120,70 158,104 120,132" fill="rgba(255,255,255,.3)" />
+      <Arms y={160} color="#c4b5fd" />
+      <Face x={120} y={140} mood="wow" />
+    </g>
+  );
+}
+
+function IodineVapour() {
+  return (
+    <g>
+      <ellipse className="wisp" cx={58} cy={78} rx={28} ry={16} fill="#e9d5ff" />
+      <ellipse className="wisp w2" cx={186} cy={70} rx={30} ry={16} fill="#d8b4fe" />
+      <ellipse cx={120} cy={150} rx={70} ry={48} fill="url(#iodineGas)" />
+      <ellipse cx={86} cy={118} rx={36} ry={30} fill="#d8b4fe" />
+      <ellipse cx={156} cy={112} rx={40} ry={32} fill="#c084fc" />
+      <ellipse cx={120} cy={96} rx={32} ry={26} fill="#e9d5ff" />
+      <Arms y={156} color="#ddd6fe" />
+      <Face x={120} y={132} mood="soft" />
     </g>
   );
 }
@@ -194,7 +248,7 @@ export function Creature({ region, reactKey, feeding, looping, biteLabel, label 
       data-feeding={acting ? feeding : "idle"}
     >
       <div className="bob">
-        <svg viewBox="0 0 240 260" role="img" aria-label={label}>
+        <svg viewBox="0 0 240 260" preserveAspectRatio="xMidYMax meet" role="img" aria-label={label}>
           <defs>
             <linearGradient id="iceGrad" x1="0" y1="0" x2="1" y2="1">
               <stop offset="0" stopColor="#f4fcff" />
@@ -224,12 +278,24 @@ export function Creature({ region, reactKey, feeding, looping, biteLabel, label 
               <stop offset="0" stopColor="#ffffff" />
               <stop offset="1" stopColor="#d5e7f4" />
             </linearGradient>
+            <linearGradient id="crystalGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stopColor="#f5f3ff" />
+              <stop offset="0.45" stopColor="#a78bfa" />
+              <stop offset="1" stopColor="#5b21b6" />
+            </linearGradient>
+            <linearGradient id="iodineGas" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stopColor="#f3e8ff" />
+              <stop offset="1" stopColor="#7e22ce" />
+            </linearGradient>
           </defs>
           {region === "ice" && <Ice />}
           {region === "melt" && <Slush />}
           {region === "water" && <Droplet boiling={false} />}
           {region === "boil" && <Droplet boiling />}
           {region === "steam" && <Steam />}
+          {region === "crystal" && <Crystal />}
+          {region === "sublime" && <CrystalVapour />}
+          {region === "vapour" && <IodineVapour />}
         </svg>
       </div>
       <div className="morsels" key={looping ? "loop" : reactKey} aria-hidden="true">

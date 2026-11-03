@@ -1,23 +1,43 @@
-import type { Dict } from "../i18n/strings";
+import type { PageCopy } from "../i18n/strings";
 import {
   C_ICE,
+  C_SOLID,
   C_STEAM,
+  C_VAPOUR,
   C_WATER,
   LF,
+  L_SUB,
   LV,
   remainingJ,
   type EnergyStep,
   type SampleView,
+  type Substance,
 } from "../physics/curve";
 import { formatKJ, formatLatent, formatPct, formatSpecificHeat } from "../format";
 
 interface TutorProps {
   view: SampleView;
   step: EnergyStep | null;
-  t: Dict;
+  t: PageCopy;
+  substance: Substance;
 }
 
-function Formula({ view }: { view: SampleView }) {
+function Formula({ view, formula }: { view: SampleView; formula: PageCopy["formula"] }) {
+  if (formula === "iodine") {
+    if (view.region === "sublime") {
+      return (
+        <p className="formula" data-testid="formula">
+          Q = ml<sub>s</sub> = 1 kg × {formatLatent(L_SUB)} kJ/kg = {formatLatent(L_SUB)} kJ
+        </p>
+      );
+    }
+    const heat = view.region === "crystal" ? C_SOLID : C_VAPOUR;
+    return (
+      <p className="formula" data-testid="formula">
+        Q = mcΔT = 1 kg × {formatSpecificHeat(heat)} kJ/kg°C × ΔT
+      </p>
+    );
+  }
   if (view.region === "melt") {
     return (
       <p className="formula" data-testid="formula">
@@ -40,24 +60,10 @@ function Formula({ view }: { view: SampleView }) {
   );
 }
 
-function nextLine(view: SampleView, t: Dict): string {
-  const left = remainingJ(view.energyJ);
-  if (view.region === "steam" && left === 0) return t.atMax;
-  const kj = formatKJ(left);
-  if (view.region === "ice") return t.nextIce(kj);
-  if (view.region === "melt") return t.nextMelt(kj);
-  if (view.region === "water") return t.nextWater(kj);
-  if (view.region === "boil") return t.nextBoil(kj);
-  return t.nextSteam(kj);
-}
-
-export function Tutor({ view, step, t }: TutorProps) {
-  const mixture =
-    view.region === "melt"
-      ? t.mixIceWater(formatPct(view.ice), formatPct(view.water))
-      : view.region === "boil"
-        ? t.mixWaterSteam(formatPct(view.water), formatPct(view.steam))
-        : null;
+export function Tutor({ view, step, t, substance }: TutorProps) {
+  const mixture = t.mixture(view, formatPct(view.ice), formatPct(view.water), formatPct(view.steam));
+  const left = remainingJ(view.energyJ, substance);
+  const atEnd = left === 0 && view.region === substance.regions[substance.regions.length - 1];
   const last =
     step && step.absorbedJ > 0
       ? t.added(formatKJ(step.absorbedJ))
@@ -75,9 +81,9 @@ export function Tutor({ view, step, t }: TutorProps) {
         {t.regions[view.region]}
         {mixture ? <span data-testid="mixture"> · {mixture}</span> : null}
       </p>
-      <Formula view={view} />
+      <Formula view={view} formula={t.formula} />
       <p className="next" data-testid="next">
-        {nextLine(view, t)}
+        {t.next(view.region, formatKJ(left), atEnd)}
         {last ? <span className="ate"> {last}</span> : null}
       </p>
     </section>

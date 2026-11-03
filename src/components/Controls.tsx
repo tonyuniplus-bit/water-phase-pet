@@ -1,8 +1,8 @@
-import type { Dict } from "../i18n/strings";
+import type { PageCopy } from "../i18n/strings";
 import { PACKETS_KJ } from "../physics/curve";
 
 interface ControlsProps {
-  t: Dict;
+  t: PageCopy;
   plateau: boolean;
   atMin: boolean;
   atMax: boolean;

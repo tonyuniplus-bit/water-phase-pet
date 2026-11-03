@@ -4,25 +4,28 @@ import { HeatingChart } from "./components/HeatingChart";
 import { Stage } from "./components/Stage";
 import { Tutor } from "./components/Tutor";
 import { formatKJ } from "./format";
-import { LOCALES, LOCALE_SHORT, STRINGS, detectLocale, type Locale } from "./i18n/strings";
+import { LOCALES, LOCALE_SHORT, detectLocale, pageCopy, type Locale } from "./i18n/strings";
 import {
-  MAX_J,
+  IODINE,
+  SUBSTANCES,
+  WATER,
   applyEnergy,
   autoStepJ,
   isPlateau,
   stateFromEnergy,
-  type EnergyStep,
+  type PageId,
   type PhaseEvent,
-  type Region,
+  type Substance,
 } from "./physics/curve";
 
-const STORAGE_KEY = "water-phase-pet";
+const WATER_KEY = "water-phase-pet";
+const IODINE_KEY = "water-phase-pet-iodine";
 
 interface Banner {
   id: number;
   event: PhaseEvent;
-  from: Region;
-  to: Region;
+  from: string;
+  to: string;
 }
 
 function savedLocale(value: unknown, fallback: Locale): Locale {
@@ -31,48 +34,75 @@ function savedLocale(value: unknown, fallback: Locale): Locale {
   return fallback;
 }
 
-function loadSaved(): { energyJ: number; locale: Locale } {
+function readEnergy(value: unknown, maxJ: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.min(maxJ, Math.max(0, Math.round(value))) : 0;
+}
+
+function pageFromHash(): PageId {
+  return window.location.hash.replace(/^#/, "") === "iodine" ? "iodine" : "water";
+}
+
+function loadSaved(): { waterJ: number; iodineJ: number; locale: Locale } {
   const fallbackLocale = detectLocale();
+  let waterJ = 0;
+  let locale = fallbackLocale;
+  let iodineJ = 0;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { energyJ: 0, locale: fallbackLocale };
-    const data = JSON.parse(raw) as { energyJ?: unknown; locale?: unknown };
-    const energyJ =
-      typeof data.energyJ === "number" && Number.isFinite(data.energyJ)
-        ? Math.min(MAX_J, Math.max(0, data.energyJ))
-        : 0;
-    const locale = savedLocale(data.locale, fallbackLocale);
-    return { energyJ, locale };
+    const raw = localStorage.getItem(WATER_KEY);
+    if (raw) {
+      const data = JSON.parse(raw) as { energyJ?: unknown; locale?: unknown };
+      waterJ = readEnergy(data.energyJ, WATER.maxJ);
+      locale = savedLocale(data.locale, fallbackLocale);
+    }
   } catch {
-    return { energyJ: 0, locale: fallbackLocale };
+    waterJ = 0;
   }
+  try {
+    const raw = localStorage.getItem(IODINE_KEY);
+    if (raw) {
+      const data = JSON.parse(raw) as { energyJ?: unknown };
+      iodineJ = readEnergy(data.energyJ, IODINE.maxJ);
+    }
+  } catch {
+    iodineJ = 0;
+  }
+  return { waterJ, iodineJ, locale };
 }
 
 export default function App() {
   const saved = useRef(loadSaved());
+  const [page, setPage] = useState<PageId>(pageFromHash);
   const [locale, setLocale] = useState<Locale>(saved.current.locale);
-  const [energyJ, setEnergyJ] = useState(saved.current.energyJ);
-  const [step, setStep] = useState<EnergyStep | null>(null);
+  const [energies, setEnergies] = useState({ water: saved.current.waterJ, iodine: saved.current.iodineJ });
+  const [step, setStep] = useState<ReturnType<typeof applyEnergy>["step"] | null>(null);
   const [banners, setBanners] = useState<Banner[]>([]);
   const [reactKey, setReactKey] = useState(0);
   const [pulse, setPulse] = useState<"heat" | "cool" | null>(null);
   const [biteLabel, setBiteLabel] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(true);
   const [auto, setAuto] = useState<"heat" | "cool" | null>(null);
+  const energyJ = energies[page];
+  const substance: Substance = SUBSTANCES[page];
   const energyRef = useRef(energyJ);
+  const pageRef = useRef(page);
+  const substanceRef = useRef(substance);
   const bannerSeq = useRef(0);
   const evolvingRef = useRef(false);
   energyRef.current = energyJ;
+  pageRef.current = page;
+  substanceRef.current = substance;
 
-  const t = STRINGS[locale];
-  const view = stateFromEnergy(energyJ);
+  const t = pageCopy(locale, page);
+  const view = stateFromEnergy(energyJ, substance);
   const banner = banners[0] ?? null;
   evolvingRef.current = banner !== null;
 
   const apply = useCallback((deltaJ: number, options?: { quiet?: boolean }) => {
-    const result = applyEnergy(energyRef.current, deltaJ);
+    const spec = substanceRef.current;
+    const result = applyEnergy(energyRef.current, deltaJ, spec);
     energyRef.current = result.energyJ;
-    setEnergyJ(result.energyJ);
+    const active = pageRef.current;
+    setEnergies((prev) => ({ ...prev, [active]: result.energyJ }));
     setStep(result.step);
     const crossed = result.step.before.region !== result.step.after.region;
     if (result.step.absorbedJ !== 0 && (!options?.quiet || crossed)) {
@@ -97,13 +127,32 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ energyJ, locale }));
-  }, [energyJ, locale]);
+    localStorage.setItem(WATER_KEY, JSON.stringify({ energyJ: energies.water, locale }));
+    localStorage.setItem(IODINE_KEY, JSON.stringify({ energyJ: energies.iodine }));
+  }, [energies, locale]);
 
   useEffect(() => {
     document.documentElement.lang = locale === "zh-Hant" ? "zh-Hant" : "en";
     document.title = `${t.title} — ${t.subtitle}`;
   }, [locale, t.subtitle, t.title]);
+
+  useEffect(() => {
+    const sync = () => {
+      const next = pageFromHash();
+      setPage((current) => {
+        if (current === next) return current;
+        setAuto(null);
+        setBanners([]);
+        setStep(null);
+        setPulse(null);
+        setBiteLabel(null);
+        setRevealed(true);
+        return next;
+      });
+    };
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, []);
 
   useEffect(() => {
     if (reactKey === 0) return;
@@ -134,7 +183,7 @@ export default function App() {
       const dt = Math.min(500, now - last);
       last = now;
       const direction = auto === "heat" ? 1 : -1;
-      const joules = autoStepJ(energyRef.current, dt / 1000, direction);
+      const joules = autoStepJ(energyRef.current, dt / 1000, direction, substanceRef.current);
       if (joules <= 0) return;
       const moved = apply(direction * joules, { quiet: true });
       if (!moved) setAuto(null);
@@ -145,7 +194,8 @@ export default function App() {
   function reset() {
     setAuto(null);
     energyRef.current = 0;
-    setEnergyJ(0);
+    const active = pageRef.current;
+    setEnergies((prev) => ({ ...prev, [active]: 0 }));
     setStep(null);
     setBanners([]);
     setPulse(null);
@@ -157,15 +207,23 @@ export default function App() {
   const feeding = flow === "heat" ? "eat" : flow === "cool" ? "release" : null;
 
   return (
-    <div className="app">
+    <div className={`app page-${page}`} data-page={page}>
       <header className="top">
         <div className="brand">
-          <span className="logo" aria-hidden="true" />
+          <span className={`logo ${page === "iodine" ? "logo-iodine" : ""}`} aria-hidden="true" />
           <div>
             <h1>{t.title}</h1>
             <p>{t.subtitle}</p>
           </div>
         </div>
+        <nav className="pages" aria-label="Example">
+          <a href="#water" data-testid="page-water" aria-current={page === "water" ? "page" : undefined}>
+            {t.pageWater}
+          </a>
+          <a href="#iodine" data-testid="page-iodine" aria-current={page === "iodine" ? "page" : undefined}>
+            {t.pageIodine}
+          </a>
+        </nav>
         <div className="langs" role="group" aria-label="Language">
           {LOCALES.map((code) => (
             <button
@@ -186,6 +244,7 @@ export default function App() {
             <Stage
               view={view}
               t={t}
+              substance={substance}
               banner={banner?.event ?? null}
               fromRegion={banner?.from ?? null}
               revealed={revealed}
@@ -197,18 +256,18 @@ export default function App() {
             />
             <Controls
               t={t}
-              plateau={isPlateau(view.region)}
+              plateau={isPlateau(view.region, substance)}
               atMin={energyJ <= 0}
-              atMax={energyJ >= MAX_J}
+              atMax={energyJ >= substance.maxJ}
               auto={auto}
               onEnergy={apply}
               onAuto={setAuto}
               onReset={reset}
             />
           </section>
-          <Tutor view={view} step={step} t={t} />
+          <Tutor view={view} step={step} t={t} substance={substance} />
         </div>
-        <HeatingChart energyJ={energyJ} t={t} />
+        <HeatingChart energyJ={energyJ} t={t} flow={flow} substance={substance} />
       </main>
     </div>
   );

@@ -17,7 +17,10 @@ export function formatPct(fraction: number): string {
 }
 
 export function formatSpecificHeat(joulesPerKgC: number): string {
-  return (joulesPerKgC / 1000).toFixed(1);
+  const value = joulesPerKgC / 1000;
+  const hundredths = Math.round(value * 100) / 100;
+  const tenths = Math.round(value * 10) / 10;
+  return Math.abs(hundredths - tenths) < 1e-8 ? tenths.toFixed(1) : hundredths.toFixed(2);
 }
 
 export function formatLatent(joulesPerKg: number): string {

@@ -1,15 +1,16 @@
 import type { CSSProperties } from "react";
-import type { Dict } from "../i18n/strings";
-import type { PhaseEvent, Region } from "../physics/curve";
-import { isPlateau, type SampleView } from "../physics/curve";
+import type { PageCopy } from "../i18n/strings";
+import type { PhaseEvent } from "../physics/curve";
+import { isPlateau, type SampleView, type Substance } from "../physics/curve";
 import { formatPct, formatTemp } from "../format";
 import { Creature } from "./Creature";
 
 interface StageProps {
   view: SampleView;
-  t: Dict;
+  t: PageCopy;
+  substance: Substance;
   banner: PhaseEvent | null;
-  fromRegion: Region | null;
+  fromRegion: string | null;
   revealed: boolean;
   reactKey: number;
   feeding: "eat" | "release" | null;
@@ -18,7 +19,7 @@ interface StageProps {
   flow: "heat" | "cool" | null;
 }
 
-const DOWNWARD: ReadonlySet<PhaseEvent> = new Set(["frozen", "condensed"]);
+const DOWNWARD: ReadonlySet<string> = new Set(["frozen", "condensed", "deposited"]);
 
 type EnergyMotion = "up" | "down" | "changes" | "steady";
 
@@ -52,6 +53,7 @@ function EvolveFx({ upward }: { upward: boolean }) {
 export function Stage({
   view,
   t,
+  substance,
   banner,
   fromRegion,
   revealed,
@@ -61,7 +63,7 @@ export function Stage({
   biteLabel,
   flow,
 }: StageProps) {
-  const plateau = isPlateau(view.region);
+  const plateau = isPlateau(view.region, substance);
   const showOld = Boolean(banner && fromRegion && !revealed);
   const displayRegion = showOld && fromRegion ? fromRegion : view.region;
   const upward = banner ? !DOWNWARD.has(banner) : true;
@@ -76,7 +78,7 @@ export function Stage({
 
   return (
     <div
-      className={`sky ${banner ? `evolving ${evoPhase} ${upward ? "evo-up" : "evo-down"}` : ""} ${plateau ? "is-locked" : ""}`}
+      className={`sky ${substance.id === "iodine" ? "iodine" : ""} ${banner ? `evolving ${evoPhase} ${upward ? "evo-up" : "evo-down"}` : ""} ${plateau ? "is-locked" : ""}`}
       data-evo={evoPhase}
     >
       <div className="cloud c1" />
@@ -127,7 +129,7 @@ export function Stage({
       {plateau && (
         <div className="latent" data-testid="latent">
           <div className="latent-top">
-            <span>{view.region === "melt" ? t.latentFusion : t.latentVapor}</span>
+            <span>{t.latentLabel(view.region)}</span>
             <span>{formatPct(view.progress)}</span>
           </div>
           <div
@@ -136,7 +138,7 @@ export function Stage({
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={Math.round(view.progress * 100)}
-            aria-label={view.region === "melt" ? t.latentFusion : t.latentVapor}
+            aria-label={t.latentLabel(view.region)}
           >
             <div className="fill" style={{ width: `${Math.min(100, view.progress * 100)}%` }} />
           </div>

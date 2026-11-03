@@ -1,4 +1,4 @@
-/** 1 kg of water, school values, stored as integer joules from ice at −20°C. */
+/** 1 kg samples, school values, stored as integer joules from the cold start. */
 
 export const MASS_KG = 1;
 export const C_ICE = 2_100;
@@ -17,47 +17,61 @@ export const WATER_END = MELT_END + C_WATER * (T_BOIL - T_MELT);
 export const BOIL_END = WATER_END + LV * MASS_KG;
 export const MAX_J = BOIL_END + C_STEAM * (T_MAX - T_BOIL);
 
+/** Classroom iodine model: solid 25°C to 114°C, one sublimation plateau, short vapour slope. */
+export const C_SOLID = 210;
+export const C_VAPOUR = 150;
+export const L_SUB = 250_000;
+export const T_ROOM = 25;
+export const T_SUB = 114;
+export const T_VAPOUR = 140;
+export const SOLID_END = C_SOLID * (T_SUB - T_ROOM);
+export const SUB_END = SOLID_END + L_SUB * MASS_KG;
+export const IODINE_MAX_J = SUB_END + C_VAPOUR * (T_VAPOUR - T_SUB);
+
 export const PACKETS_KJ = [10, 50, 200] as const;
 
 export type Region = "ice" | "melt" | "water" | "boil" | "steam";
-export type PhaseEvent = "melted" | "boiled" | "frozen" | "condensed";
+export type IodineRegion = "crystal" | "sublime" | "vapour";
+export type PhaseEvent = "melted" | "boiled" | "frozen" | "condensed" | "sublimed" | "deposited";
 export type HeatKind = "sensible" | "latent";
+export type PageId = "water" | "iodine";
 
 export interface Segment {
-  region: Region;
+  region: string;
   kind: HeatKind;
   startJ: number;
   endJ: number;
+  t0: number;
+  t1: number;
 }
 
-export const SEGMENTS: readonly Segment[] = [
-  { region: "ice", kind: "sensible", startJ: 0, endJ: ICE_END },
-  { region: "melt", kind: "latent", startJ: ICE_END, endJ: MELT_END },
-  { region: "water", kind: "sensible", startJ: MELT_END, endJ: WATER_END },
-  { region: "boil", kind: "latent", startJ: WATER_END, endJ: BOIL_END },
-  { region: "steam", kind: "sensible", startJ: BOIL_END, endJ: MAX_J },
-];
+interface PhaseRule {
+  fromAtMost?: number;
+  toAtLeast?: number;
+  fromAtLeast?: number;
+  toAtMost?: number;
+  event: PhaseEvent;
+}
 
-/**
- * Corners of the heating curve. Plateau starts belong to the mixture.
- * Plateau ends belong to the next pure phase, still at the critical temperature.
- */
-export const CORNERS: readonly { energyJ: number; tempC: number }[] = [
-  { energyJ: 0, tempC: T_MIN },
-  { energyJ: ICE_END, tempC: T_MELT },
-  { energyJ: MELT_END, tempC: T_MELT },
-  { energyJ: WATER_END, tempC: T_BOIL },
-  { energyJ: BOIL_END, tempC: T_BOIL },
-  { energyJ: MAX_J, tempC: T_MAX },
-];
-
-const REGION_ORDER: readonly Region[] = ["ice", "melt", "water", "boil", "steam"];
+export interface Substance {
+  id: PageId;
+  maxJ: number;
+  tMin: number;
+  tMax: number;
+  segments: readonly Segment[];
+  corners: readonly { energyJ: number; tempC: number }[];
+  yTicks: readonly number[];
+  xTicks: readonly number[];
+  regions: readonly string[];
+  up: readonly PhaseRule[];
+  down: readonly PhaseRule[];
+  fractions: (region: string, progress: number) => { ice: number; water: number; steam: number };
+}
 
 export interface SampleView {
   energyJ: number;
-  region: Region;
+  region: string;
   tempC: number;
-  /** Melted fraction on the 0°C plateau, vapor fraction on the 100°C plateau, otherwise 0. */
   progress: number;
   ice: number;
   water: number;
@@ -65,7 +79,7 @@ export interface SampleView {
 }
 
 export interface EnergyPart {
-  region: Region;
+  region: string;
   kind: HeatKind;
   energyJ: number;
   tempBefore: number;
@@ -84,81 +98,141 @@ export interface EnergyStep {
   after: SampleView;
 }
 
+function sensible(region: string, startJ: number, endJ: number, t0: number, t1: number): Segment {
+  return { region, kind: "sensible", startJ, endJ, t0, t1 };
+}
+
+function latent(region: string, startJ: number, endJ: number, tempC: number): Segment {
+  return { region, kind: "latent", startJ, endJ, t0: tempC, t1: tempC };
+}
+
+export const WATER: Substance = {
+  id: "water",
+  maxJ: MAX_J,
+  tMin: T_MIN,
+  tMax: T_MAX,
+  segments: [
+    sensible("ice", 0, ICE_END, T_MIN, T_MELT),
+    latent("melt", ICE_END, MELT_END, T_MELT),
+    sensible("water", MELT_END, WATER_END, T_MELT, T_BOIL),
+    latent("boil", WATER_END, BOIL_END, T_BOIL),
+    sensible("steam", BOIL_END, MAX_J, T_BOIL, T_MAX),
+  ],
+  corners: [
+    { energyJ: 0, tempC: T_MIN },
+    { energyJ: ICE_END, tempC: T_MELT },
+    { energyJ: MELT_END, tempC: T_MELT },
+    { energyJ: WATER_END, tempC: T_BOIL },
+    { energyJ: BOIL_END, tempC: T_BOIL },
+    { energyJ: MAX_J, tempC: T_MAX },
+  ],
+  yTicks: [T_MIN, 0, 100, T_MAX],
+  xTicks: [0, MELT_END, WATER_END, BOIL_END],
+  regions: ["ice", "melt", "water", "boil", "steam"],
+  up: [
+    { fromAtMost: 1, toAtLeast: 2, event: "melted" },
+    { fromAtMost: 3, toAtLeast: 4, event: "boiled" },
+  ],
+  down: [
+    { fromAtLeast: 3, toAtMost: 2, event: "condensed" },
+    { fromAtLeast: 1, toAtMost: 0, event: "frozen" },
+  ],
+  fractions(region, progress) {
+    if (region === "ice") return { ice: 1, water: 0, steam: 0 };
+    if (region === "melt") return { ice: 1 - progress, water: progress, steam: 0 };
+    if (region === "water") return { ice: 0, water: 1, steam: 0 };
+    if (region === "boil") return { ice: 0, water: 1 - progress, steam: progress };
+    return { ice: 0, water: 0, steam: 1 };
+  },
+};
+
+export const IODINE: Substance = {
+  id: "iodine",
+  maxJ: IODINE_MAX_J,
+  tMin: T_ROOM,
+  tMax: T_VAPOUR,
+  segments: [
+    sensible("crystal", 0, SOLID_END, T_ROOM, T_SUB),
+    latent("sublime", SOLID_END, SUB_END, T_SUB),
+    sensible("vapour", SUB_END, IODINE_MAX_J, T_SUB, T_VAPOUR),
+  ],
+  corners: [
+    { energyJ: 0, tempC: T_ROOM },
+    { energyJ: SOLID_END, tempC: T_SUB },
+    { energyJ: SUB_END, tempC: T_SUB },
+    { energyJ: IODINE_MAX_J, tempC: T_VAPOUR },
+  ],
+  yTicks: [T_ROOM, T_SUB, T_VAPOUR],
+  xTicks: [0, SOLID_END, SUB_END],
+  regions: ["crystal", "sublime", "vapour"],
+  up: [{ fromAtMost: 1, toAtLeast: 2, event: "sublimed" }],
+  down: [{ fromAtLeast: 1, toAtMost: 0, event: "deposited" }],
+  fractions(region, progress) {
+    if (region === "crystal") return { ice: 1, water: 0, steam: 0 };
+    if (region === "sublime") return { ice: 1 - progress, water: 0, steam: progress };
+    return { ice: 0, water: 0, steam: 1 };
+  },
+};
+
+export const SUBSTANCES: Record<PageId, Substance> = {
+  water: WATER,
+  iodine: IODINE,
+};
+
+/** Water segments, kept for callers that read the lesson boundaries directly. */
+export const SEGMENTS: readonly Segment[] = WATER.segments;
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function pack(
-  energyJ: number,
-  region: Region,
-  tempC: number,
-  progress: number,
-  ice: number,
-  water: number,
-  steam: number,
-): SampleView {
-  return { energyJ, region, tempC, progress, ice, water, steam };
+function segmentAt(energyJ: number, substance: Substance): Segment {
+  const q = clamp(energyJ, 0, substance.maxJ);
+  return substance.segments.find((segment) => q < segment.endJ) ?? substance.segments[substance.segments.length - 1];
 }
 
-export function stateFromEnergy(energyJ: number): SampleView {
-  const q = clamp(energyJ, 0, MAX_J);
-  if (q < ICE_END) {
-    return pack(q, "ice", T_MIN + q / C_ICE, 0, 1, 0, 0);
-  }
-  if (q < MELT_END) {
-    const melted = (q - ICE_END) / LF;
-    return pack(q, "melt", T_MELT, melted, 1 - melted, melted, 0);
-  }
-  if (q < WATER_END) {
-    return pack(q, "water", (q - MELT_END) / C_WATER, 0, 0, 1, 0);
-  }
-  if (q < BOIL_END) {
-    const vapor = (q - WATER_END) / LV;
-    return pack(q, "boil", T_BOIL, vapor, 0, 1 - vapor, vapor);
-  }
-  return pack(q, "steam", T_BOIL + (q - BOIL_END) / C_STEAM, 0, 0, 0, 1);
+function tempOn(segment: Segment, q: number): number {
+  if (segment.kind === "latent") return segment.t0;
+  const span = segment.endJ - segment.startJ;
+  return segment.t0 + ((q - segment.startJ) * (segment.t1 - segment.t0)) / span;
 }
 
-function tempOnSegment(region: Region, q: number): number {
-  switch (region) {
-    case "ice":
-      return T_MIN + q / C_ICE;
-    case "melt":
-      return T_MELT;
-    case "water":
-      return (q - MELT_END) / C_WATER;
-    case "boil":
-      return T_BOIL;
-    case "steam":
-      return T_BOIL + (q - BOIL_END) / C_STEAM;
-  }
+function progressOn(segment: Segment, q: number): number {
+  if (segment.kind !== "latent") return 0;
+  return (q - segment.startJ) / (segment.endJ - segment.startJ);
 }
 
-function progressOnSegment(region: Region, q: number): number {
-  if (region === "melt") return (q - ICE_END) / LF;
-  if (region === "boil") return (q - WATER_END) / LV;
-  return 0;
+function pack(substance: Substance, energyJ: number, segment: Segment, q: number): SampleView {
+  const progress = progressOn(segment, q);
+  const parts = substance.fractions(segment.region, progress);
+  return { energyJ, region: segment.region, tempC: tempOn(segment, q), progress, ...parts };
 }
 
-export function phaseChangesBetween(before: SampleView, after: SampleView): PhaseEvent[] {
+export function stateFromEnergy(energyJ: number, substance: Substance = WATER): SampleView {
+  const q = clamp(energyJ, 0, substance.maxJ);
+  return pack(substance, q, segmentAt(q, substance), q);
+}
+
+export function phaseChangesBetween(before: SampleView, after: SampleView, substance: Substance = WATER): PhaseEvent[] {
   if (after.energyJ === before.energyJ) return [];
-  const b = REGION_ORDER.indexOf(before.region);
-  const a = REGION_ORDER.indexOf(after.region);
+  const b = substance.regions.indexOf(before.region);
+  const a = substance.regions.indexOf(after.region);
   const events: PhaseEvent[] = [];
-  if (after.energyJ > before.energyJ) {
-    if (b <= 1 && a >= 2) events.push("melted");
-    if (b <= 3 && a >= 4) events.push("boiled");
-  } else {
-    if (b >= 3 && a <= 2) events.push("condensed");
-    if (b >= 1 && a <= 0) events.push("frozen");
+  const rules = after.energyJ > before.energyJ ? substance.up : substance.down;
+  for (const rule of rules) {
+    const heating = after.energyJ > before.energyJ;
+    const hit = heating
+      ? b <= (rule.fromAtMost ?? -1) && a >= (rule.toAtLeast ?? 99)
+      : b >= (rule.fromAtLeast ?? 99) && a <= (rule.toAtMost ?? -1);
+    if (hit) events.push(rule.event);
   }
   return events;
 }
 
-function sliceParts(from: number, to: number): EnergyPart[] {
+function sliceParts(from: number, to: number, substance: Substance): EnergyPart[] {
   if (from === to) return [];
   const sign = to > from ? 1 : -1;
-  const segs = sign > 0 ? SEGMENTS : [...SEGMENTS].reverse();
+  const segs = sign > 0 ? substance.segments : [...substance.segments].reverse();
   const lo = Math.min(from, to);
   const hi = Math.max(from, to);
   const parts: EnergyPart[] = [];
@@ -173,21 +247,25 @@ function sliceParts(from: number, to: number): EnergyPart[] {
       region: seg.region,
       kind: seg.kind,
       energyJ: sign * overlap,
-      tempBefore: tempOnSegment(seg.region, startQ),
-      tempAfter: tempOnSegment(seg.region, endQ),
-      progressBefore: progressOnSegment(seg.region, startQ),
-      progressAfter: progressOnSegment(seg.region, endQ),
+      tempBefore: tempOn(seg, startQ),
+      tempAfter: tempOn(seg, endQ),
+      progressBefore: progressOn(seg, startQ),
+      progressAfter: progressOn(seg, endQ),
     });
   }
   return parts;
 }
 
-export function applyEnergy(energyJ: number, deltaJ: number): { energyJ: number; step: EnergyStep } {
-  const before = stateFromEnergy(energyJ);
+export function applyEnergy(
+  energyJ: number,
+  deltaJ: number,
+  substance: Substance = WATER,
+): { energyJ: number; step: EnergyStep } {
+  const before = stateFromEnergy(energyJ, substance);
   const raw = before.energyJ + deltaJ;
-  const next = clamp(raw, 0, MAX_J);
-  const after = stateFromEnergy(next);
-  const parts = sliceParts(before.energyJ, next);
+  const next = clamp(raw, 0, substance.maxJ);
+  const after = stateFromEnergy(next, substance);
+  const parts = sliceParts(before.energyJ, next, substance);
   return {
     energyJ: next,
     step: {
@@ -195,22 +273,17 @@ export function applyEnergy(energyJ: number, deltaJ: number): { energyJ: number;
       absorbedJ: next - before.energyJ,
       wastedJ: raw - next,
       parts,
-      phaseChanges: phaseChangesBetween(before, after),
+      phaseChanges: phaseChangesBetween(before, after, substance),
       before,
       after,
     },
   };
 }
 
-export function remainingJ(energyJ: number): number {
-  const q = clamp(energyJ, 0, MAX_J);
-  const seg = SEGMENTS.find((segment) => q < segment.endJ) ?? SEGMENTS[SEGMENTS.length - 1];
+export function remainingJ(energyJ: number, substance: Substance = WATER): number {
+  const q = clamp(energyJ, 0, substance.maxJ);
+  const seg = segmentAt(q, substance);
   return seg.endJ - q;
-}
-
-function segmentAt(energyJ: number): Segment {
-  const q = clamp(energyJ, 0, MAX_J);
-  return SEGMENTS.find((segment) => q < segment.endJ) ?? SEGMENTS[SEGMENTS.length - 1];
 }
 
 function smoothstep(unit: number): number {
@@ -222,9 +295,9 @@ function smoothstep(unit: number): number {
  * Auto heat lingers near the ends of a state, where the temperature locks
  * or a change of state is about to finish, and cruises through the middle.
  */
-export function autoJoulesPerSecond(energyJ: number): number {
-  const q = clamp(energyJ, 0, MAX_J);
-  const segment = segmentAt(q);
+export function autoJoulesPerSecond(energyJ: number, substance: Substance = WATER): number {
+  const q = clamp(energyJ, 0, substance.maxJ);
+  const segment = segmentAt(q, substance);
   const span = segment.endJ - segment.startJ;
   const edge = Math.min(q - segment.startJ, segment.endJ - q);
   const short = span < 80_000;
@@ -237,30 +310,35 @@ export function autoJoulesPerSecond(energyJ: number): number {
 }
 
 /** One auto tick, never leaping past the next change of state. */
-export function autoStepJ(energyJ: number, dtSeconds: number, direction: 1 | -1): number {
-  const q = clamp(energyJ, 0, MAX_J);
+export function autoStepJ(
+  energyJ: number,
+  dtSeconds: number,
+  direction: 1 | -1,
+  substance: Substance = WATER,
+): number {
+  const q = clamp(energyJ, 0, substance.maxJ);
   const dt = clamp(dtSeconds, 0, 0.5);
-  const wanted = Math.round(autoJoulesPerSecond(q) * dt);
+  const wanted = Math.round(autoJoulesPerSecond(q, substance) * dt);
   if (wanted <= 0) return 0;
-  const segment = segmentAt(q);
+  const segment = segmentAt(q, substance);
   const room = direction > 0 ? segment.endJ - q : q - segment.startJ;
   if (room <= 0) return wanted;
   return Math.min(wanted, room);
 }
 
-export function curvePoints(uptoJ: number): { energyJ: number; tempC: number }[] {
-  const q = clamp(uptoJ, 0, MAX_J);
+export function curvePoints(uptoJ: number, substance: Substance = WATER): { energyJ: number; tempC: number }[] {
+  const q = clamp(uptoJ, 0, substance.maxJ);
   const points: { energyJ: number; tempC: number }[] = [];
-  for (const corner of CORNERS) {
+  for (const corner of substance.corners) {
     if (corner.energyJ < q) points.push({ energyJ: corner.energyJ, tempC: corner.tempC });
     else {
-      points.push({ energyJ: q, tempC: stateFromEnergy(q).tempC });
+      points.push({ energyJ: q, tempC: stateFromEnergy(q, substance).tempC });
       return points;
     }
   }
   return points;
 }
 
-export function isPlateau(region: Region): boolean {
-  return region === "melt" || region === "boil";
+export function isPlateau(region: string, substance: Substance = WATER): boolean {
+  return substance.segments.some((segment) => segment.region === region && segment.kind === "latent");
 }
